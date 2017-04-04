@@ -1,0 +1,214 @@
+### Basic start
+
+docker run solr:latest
+
+# we can't connect, so let's stop
+
+docker run -p 8983:8983 solr:latest
+
+# it is attached to foreground - not good
+
+docker run -d -p 8983:8983 solr:latest
+
+docker ps
+
+docker stop CONTAINER_ID
+
+# stop and give name to Solr container
+
+docker run --name meetup_single_solr -d -p 8983:8983 -t solr:6.5.0
+
+docker run --name meetup_single_solr_latest -d -p 8983:8983 -t solr:6.5.0
+
+# stop and remove the container
+
+docker stop meetup_single_solr
+docker stop meetup_single_solr_latest
+
+docker rm meetup_single_solr
+docker rm meetup_single_solr_latest
+
+# we can also run Alpine based distribution
+
+docker run --name meetup_alpine_solr -d -p 8983:8983 -t solr:6.5.0-alpine
+
+docker stop meetup_alpine_solr
+
+docker rm meetup_alpine_solr
+
+### Let's set heap
+
+## first let's set Solr heap (show script)
+
+#!/bin/bash
+set -e
+cp /opt/solr/bin/solr.in.sh /opt/solr/bin/solr.in.sh.original
+sed -e 's/SOLR_HEAP=".*"/SOLR_HEAP="1024m"/' </opt/solr/bin/solr.in.sh.original >/opt/solr/bin/solr.in.sh
+grep '^SOLR_HEAP=' /opt/solr/bin/solr.in.sh
+
+docker run --name meetup_solr_heap -p 8983:8983 -d -P -v $PWD/set-heap.sh:/docker-entrypoint-initdb.d/set-heap.sh solr:6.5.0
+
+docker logs meetup_solr_heap
+
+docker stop meetup_solr_heap
+
+docker rm meetup_solr_heap
+
+### Let's limit container memory
+
+docker run -it --name meetup_solr_mem -p 8983:8983 -d -m 1G solr:6.5.0
+
+docker stop meetup_solr_mem
+
+### We can turn swappiness off
+
+docker run -it --name meetup_someetup_swap -p 8983:8983 -d -m 2G --memory-swappiness=0 solr:6.5.0
+
+docker stop meetup_someetup_swap
+
+### Let's give a two CPU cores only
+
+docker run -it --cpuset-cpus="0,1" --name meetup_solr_cpu -p 8983:8983 -d solr:6.5.0
+
+docker stop meetup_solr_cpu
+
+docker rm meetup_solr_cpu
+
+### Creating core
+
+docker run --name meetup_single_solr -d -p 8983:8983 -t solr:6.5.0
+
+docker exec -it --user solr meetup_single_solr bin/solr create_core -c gettingstarted
+
+docker logs meetup_single_solr
+
+### Index some documents
+
+docker exec -it --user solr meetup_single_solr bin/post -c gettingstarted example/exampledocs/*.xml
+
+docker logs meetup_single_solr
+
+curl 'localhost:8983/solr/gettingstarted/select?q=*:*&indent=true'
+
+docker stop meetup_single_solr
+
+docker rm meetup_single_solr
+
+### Create a collection
+
+docker run --name meetup_solr_one -d -p 8983:8983 -p 9983:9983 -t solr:6.5.0 -c
+
+docker logs meetup_solr_one
+
+docker exec -it --user solr meetup_solr_one bin/solr zk -upconfig -n example -z localhost:9983 -d server/solr/configsets/data_driven_schema_configs/conf
+
+curl 'localhost:8983/solr/admin/collections?action=CREATE&name=meetup&numShards=1&replicationFactor=1&maxShardsPerNode=1&collection.configName=example'
+
+### Now let's add new nodes
+
+# this will not work, but is nice to show what is happening
+
+docker run --name meetup_solr_two -d -p 6983:6983 -t solr:6.5.0 -z localhost:9983
+
+docker logs meetup_solr_two
+
+docker stop meetup_solr_two
+
+docker rm meetup_solr_two
+
+# this will work
+
+docker run --name meetup_solr_two -d --link meetup_solr_one -p 6983:6983 -t solr:6.5.0 -z meetup_solr_one:9983
+
+docker logs meetup_solr_two
+
+### We can create replicas
+
+curl 'localhost:8983/solr/admin/collections?action=ADDREPLICA&collection=meetup&shard=shard1&node=172.17.0.3:8983_solr'
+
+docker stop meetup_solr_two
+docker stop meetup_solr_one
+docker rm meetup_solr_one
+docker rm meetup_solr_two
+
+### And now the disks
+
+# this won't work, because of solr.xml
+
+docker run --name meetup_solr_disk -d -p 8983:8983 -t -v /tmp/solr:/opt/solr/server/solr solr:6.5.0
+
+docker rm meetup_solr_disk
+
+<solr>
+  <solrcloud>
+    <str name="host">${host:}</str>
+    <int name="hostPort">${jetty.port:8983}</int>
+    <str name="hostContext">${hostContext:solr}</str>
+    <bool name="genericCoreNodeNames">${genericCoreNodeNames:true}</bool>
+    <int name="zkClientTimeout">${zkClientTimeout:30000}</int>
+    <int name="distribUpdateSoTimeout">${distribUpdateSoTimeout:600000}</int>
+    <int name="distribUpdateConnTimeout">${distribUpdateConnTimeout:60000}</int>
+    <str name="zkCredentialsProvider">${zkCredentialsProvider:org.apache.solr.common.cloud.DefaultZkCredentialsProvider}</str>
+    <str name="zkACLProvider">${zkACLProvider:org.apache.solr.common.cloud.DefaultZkACLProvider}</str>
+  </solrcloud>
+  <shardHandlerFactory name="shardHandlerFactory"
+    class="HttpShardHandlerFactory">
+    <int name="socketTimeout">${socketTimeout:600000}</int>
+    <int name="connTimeout">${connTimeout:60000}</int>
+  </shardHandlerFactory>
+</solr>
+
+docker run --name meetup_solr_disk -d -p 8983:8983 -t -v /Users/gro/Solry/temp/:/opt/solr/server/solr solr:6.5.0
+
+docker stop meetup_solr_disk
+docker rm meetup_solr_disk
+
+### And storage only volumes usage
+
+docker create -v /opt/solr/server/solr --name meetup_solr_data_container solr /bin/true
+
+docker run -d -P -p 8983:8983 --name meetup_solr_using_data_container --volumes-from=meetup_solr_data_container solr
+
+docker stop meetup_solr_using_data_container
+docker rm -v meetup_solr_using_data_container
+
+### And now, compose
+
+version: "2"
+services:
+  solr1:
+    image: solr:6.5.0
+    ports:
+      - "8983:8983"
+    links:
+      - zookeeper
+    command: bash -c '/opt/solr/bin/solr start -f -z zookeeper:2181'
+  solr2:
+    image: solr:6.5.0
+    links:
+      - zookeeper
+      - solr1
+    command: bash -c '/opt/solr/bin/solr start -f -z zookeeper:2181'
+  solr3:
+    image: solr:6.5.0
+    links:
+      - zookeeper
+      - solr1
+      - solr2
+    command: bash -c '/opt/solr/bin/solr start -f -z zookeeper:2181'
+  solr4:
+    image: solr:6.5.0
+    links:
+      - zookeeper
+      - solr1
+      - solr2
+      - solr3
+    command: bash -c '/opt/solr/bin/solr start -f -z zookeeper:2181'
+  zookeeper:
+    image: jplock/zookeeper:3.4.8
+    ports:
+      - "2181:2181"
+      - "2888:2888"
+      - "3888:3888"
+
+docker-compose up
