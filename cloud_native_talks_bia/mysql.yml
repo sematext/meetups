@@ -1,0 +1,14 @@
+metricbeat.config.modules:
+  path: ${path.config}/conf.d/*.yml
+  reload.period: 10s
+  reload.enabled: false
+metricbeat.max_start_delay: 10s
+
+metricbeat.modules:
+- module: mysql
+  metricsets: ["status"]
+  period: 10s
+  hosts: ["sematext:semat3xt@tcp(127.0.0.1:3306)/"]
+
+output.elasticsearch:
+  hosts: ["localhost:9200"]
